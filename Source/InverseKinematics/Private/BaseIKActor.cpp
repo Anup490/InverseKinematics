@@ -9,35 +9,94 @@ void ABaseIKActor::Tick(float DeltaTime) { Super::Tick(DeltaTime); }
 
 void ABaseIKActor::ChangePose(USceneComponent* Root, USceneComponent* Controller, FVector Target)
 {
-	FVector CompLocation = Root->GetComponentLocation();
-	FVector CompToTarget = Target - CompLocation;
-	float DistanceToTarget = CompToTarget.Length();
+	FVector RootLocation = Root->GetComponentLocation();
+	Target.X = RootLocation.X;
+	FVector RootToTarget = Target - RootLocation;
+	float DistanceToTarget = RootToTarget.Length();
 	if (DistanceToTarget <= GetIKSystemLength())
-		BackTrackFromLeafArm(Controller, NULL, Target);
+		BackTrackFromLeafArm(Root, Controller, Target);
 	else
 	{
-		CompToTarget.Normalize();
-		CompToTarget *= DistanceToTarget;
-		FVector NewTarget = CompLocation + CompToTarget;
-		BackTrackFromLeafArm(Controller, NULL, NewTarget);
+		RootToTarget.Normalize();
+		RootToTarget *= DistanceToTarget;
+		FVector NewTarget = RootLocation + RootToTarget;
+		BackTrackFromLeafArm(Root, Controller, NewTarget);
 	}
 }
 
-void ABaseIKActor::ChangePoseFor2ndArm(USceneComponent* Controller, FVector Target)
+void ABaseIKActor::BackTrackFromLeafArm(USceneComponent* Root, USceneComponent* Component, FVector Target)
 {
-	USceneComponent* Component = Controller->GetAttachParent();
-	USceneComponent* Root = Component->GetAttachParent();
-	FVector ControlLocation = Controller->GetComponentLocation();
-	FVector CompLocation = Component->GetComponentLocation();
+	USceneComponent* Parent = Component->GetAttachParent();
+	USceneComponent* GrandParent = Parent->GetAttachParent();
+	USceneComponent* GreatGrandParent = GrandParent->GetAttachParent();
+	USceneComponent* Great2GrandParent = GreatGrandParent->GetAttachParent();
+	if (Parent && GrandParent && GreatGrandParent && Great2GrandParent)
+		CalculatePsiAngle(Root, Component, Target);
+	else if (Parent && GrandParent && GreatGrandParent && !Great2GrandParent)
+		ChangePoseFor2ndArm(Component, Target);
+}
+
+void ABaseIKActor::CalculatePsiAngle(USceneComponent* Root, USceneComponent* Component, FVector Target)
+{
+	USceneComponent* Parent = Component->GetAttachParent();
+	FVector ParentOgLocation = GetOriginalLocationOfComponent(Parent);
+	FVector ParentOgToTarget = Target - ParentOgLocation;
+	float ParentOgToTargetLen = ParentOgToTarget.Length();
+	FVector CompOgLocation = GetOriginalLocationOfComponent(Component);
+	FVector ParentOgToComponentOg = CompOgLocation - ParentOgLocation;
+	float ParentOgToComponentOgLen = ParentOgToComponentOg.Length();
+
+	FVector TargetToParentOg = -ParentOgToTarget;
+	TargetToParentOg.Normalize();
+	TargetToParentOg *= ParentOgToComponentOgLen;
+
+	FVector RootLocation = Root->GetComponentLocation();
+	FVector RootToTarget = Target - RootLocation;
+	FVector RootToParent = RootToTarget + TargetToParentOg;
+	float RootToParentLen = RootToParent.Length();
+	FVector RootToParentOg = ParentOgLocation - RootLocation;
+	float RootToParentOgLen = RootToParentOg.Length();
+
+	float Psi = 0;
+	FVector ParentLocation;
+	if (RootToParentLen > RootToParentOgLen)
+	{
+		FVector TargetToRoot = -RootToTarget;
+		TargetToRoot.Normalize();
+		TargetToRoot *= ParentOgToComponentOgLen;
+		ParentLocation = Target + TargetToRoot;
+
+		FVector ParentToTarget = Target - ParentLocation;
+		float ParentToTargetLen = ParentToTarget.Length();
+		float Dot = FVector::DotProduct(ParentToTarget, ParentOgToComponentOg);
+		Psi = FMath::RadiansToDegrees(FMath::Acos(Dot / (ParentToTargetLen * ParentOgToComponentOgLen)));
+	}
+	else
+	{
+		ParentLocation = Target + TargetToParentOg;
+		float Dot = FVector::DotProduct(ParentOgToTarget, ParentOgToComponentOg);
+		Psi = FMath::RadiansToDegrees(FMath::Acos(Dot / (ParentOgToTargetLen * ParentOgToComponentOgLen)));
+	}
+	Psi = (Target.Y - RootLocation.Y) < 0 ? -Psi : Psi;
+	ArmData.Add(FArm2DData{ Psi, Parent });
+	BackTrackFromLeafArm(Root, Parent, ParentLocation);
+}
+
+void ABaseIKActor::ChangePoseFor2ndArm(USceneComponent* Component, FVector Target)
+{
+	USceneComponent* Parent = Component->GetAttachParent();
+	USceneComponent* Root = Parent->GetAttachParent();
+	FVector ComponentLocation = Component->GetComponentLocation();
+	FVector ParentLocation = Parent->GetComponentLocation();
 	FVector RootLocation = Root->GetComponentLocation();
 
-	FVector CompToControl = ControlLocation - CompLocation;
-	float CompToControlLen = CompToControl.Length();
-	float CompToControlLenSquared = CompToControlLen * CompToControlLen;
+	FVector ParentToControl = ComponentLocation - ParentLocation;
+	float ParentToControlLen = ParentToControl.Length();
+	float ParentToControlLenSquared = ParentToControlLen * ParentToControlLen;
 
-	FVector RootToComp = CompLocation - RootLocation;
-	float RootToCompLen = RootToComp.Length();
-	float RootToCompLenSquared = RootToCompLen * RootToCompLen;
+	FVector RootToParent = ParentLocation - RootLocation;
+	float RootToParentLen = RootToParent.Length();
+	float RootToParentLenSquared = RootToParentLen * RootToParentLen;
 
 	FVector RootToTarget = Target - RootLocation;
 	float RootToTargetLen = RootToTarget.Length();
@@ -48,8 +107,8 @@ void ABaseIKActor::ChangePoseFor2ndArm(USceneComponent* Controller, FVector Targ
 	bool IsYNegative = Theta1ATanDenominator < 0.0f;
 	float ArcTangent = FMath::RadiansToDegrees(FMath::Atan(Theta1ATanNumerator / Theta1ATanDenominator));
 
-	float Theta1ACosNumerator = RootToCompLenSquared + RootToTargetLenSquared - CompToControlLenSquared;
-	float Theta1ACosDenominator = 2 * RootToCompLen * RootToTargetLen;
+	float Theta1ACosNumerator = RootToParentLenSquared + RootToTargetLenSquared - ParentToControlLenSquared;
+	float Theta1ACosDenominator = 2 * RootToParentLen * RootToTargetLen;
 	float ArcCosine = FMath::RadiansToDegrees(FMath::Acos(Theta1ACosNumerator / Theta1ACosDenominator));
 	
 	if (IsYNegative)
@@ -63,8 +122,8 @@ void ABaseIKActor::ChangePoseFor2ndArm(USceneComponent* Controller, FVector Targ
 		Theta1 = -Theta1;
 
 	Root->SetRelativeRotation(FRotator(0, 0, Theta1));
-	float Theta2Numerator = CompToControlLenSquared + RootToCompLenSquared - RootToTargetLenSquared;
-	float Theta2Denominator = 2 * CompToControlLen * RootToCompLen;
+	float Theta2Numerator = ParentToControlLenSquared + RootToParentLenSquared - RootToTargetLenSquared;
+	float Theta2Denominator = 2 * ParentToControlLen * RootToParentLen;
 	float ArcCosineTheta2 = FMath::RadiansToDegrees(FMath::Acos(Theta2Numerator / Theta2Denominator));
 
 	if (IsYNegative)
@@ -72,16 +131,20 @@ void ABaseIKActor::ChangePoseFor2ndArm(USceneComponent* Controller, FVector Targ
 	float Theta2 = 180.0 - ArcCosineTheta2;
 	if (IsYNegative)
 		Theta2 = -Theta2;
-	Component->SetRelativeRotation(FRotator(0, 0, Theta2));
+	Parent->SetRelativeRotation(FRotator(0, 0, Theta2));
+	ChangePoseForNthArm(Theta1 + Theta2, ArmData.Num() - 1);
 }
 
-void ABaseIKActor::BackTrackFromLeafArm(USceneComponent* Component, USceneComponent* Child, FVector Target)
+void ABaseIKActor::ChangePoseForNthArm(float ThetaSum, int32 Index)
 {
-	USceneComponent* Parent = Component->GetAttachParent();
-	USceneComponent* GrandParent = Parent->GetAttachParent();
-	USceneComponent* GreatGrandParent = GrandParent->GetAttachParent();
-	USceneComponent* Root = GreatGrandParent->GetAttachParent();
-	if (Parent && GrandParent && GreatGrandParent && !Root)
-		ChangePoseFor2ndArm(Component, Target);
+	if (Index > -1)
+	{
+		FArm2DData Arm = ArmData[Index];
+		USceneComponent* Component = Arm.Component;
+		float Theta = Arm.Psi - ThetaSum;
+		Component->SetRelativeRotation(FRotator(0, 0, Theta));
+		ChangePoseForNthArm(Theta + ThetaSum, --Index);
+	}
+	else
+		ArmData.Empty();
 }
-

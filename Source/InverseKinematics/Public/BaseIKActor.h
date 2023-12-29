@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Arm2DData.h"
 #include "BaseIKActor.generated.h"
 
 UCLASS()
@@ -15,7 +16,11 @@ protected:
 	virtual void BeginPlay() override;
 	UFUNCTION(BlueprintCallable) void ChangePose(USceneComponent* Root, USceneComponent* Controller, FVector Target);
 	UFUNCTION(BlueprintImplementableEvent) float GetIKSystemLength();
+	UFUNCTION(BlueprintImplementableEvent) FVector GetOriginalLocationOfComponent(USceneComponent* Component);
 private:
-	void ChangePoseFor2ndArm(USceneComponent* Controller, FVector Target);
-	void BackTrackFromLeafArm(USceneComponent* Component, USceneComponent* Child, FVector Target);
+	TArray<FArm2DData> ArmData;
+	void BackTrackFromLeafArm(USceneComponent* Root, USceneComponent* Component, FVector Target);
+	void CalculatePsiAngle(USceneComponent* Root, USceneComponent* Component, FVector Target);
+	void ChangePoseFor2ndArm(USceneComponent* Component, FVector Target);
+	void ChangePoseForNthArm(float ThetaSum, int32 Index);
 };
