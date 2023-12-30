@@ -9,12 +9,20 @@ void ABaseIKActor::Tick(float DeltaTime) { Super::Tick(DeltaTime); }
 
 void ABaseIKActor::ChangePose(USceneComponent* Root, USceneComponent* Controller, FVector Target)
 {
-	FVector RootLocation = Root->GetComponentLocation();
-	Target.X = RootLocation.X;
-	FVector RootToTarget = Target - RootLocation;
+	FVector LocalTarget = ULibrary::ToActorLocalSpace(this, Target);
+	FVector ProjLocalTarget(LocalTarget.X, LocalTarget.Y, 0);
+	ProjLocalTarget.Normalize();
+	float YawAngle = FMath::RadiansToDegrees(FMath::Acos(FVector::DotProduct(ProjLocalTarget, FVector(0, 1, 0))));
+	if (ProjLocalTarget.Y < 0.0f)
+		YawAngle = YawAngle - 180;
+	if (ProjLocalTarget.X > 0.0f)
+		YawAngle = -YawAngle;
+	Root->SetRelativeRotation(FRotator(0, YawAngle, 0));
+	FVector RootLocation = ULibrary::ToActorLocalSpace(this, Root->GetComponentLocation());
+	FVector RootToTarget = LocalTarget - RootLocation;
 	float DistanceToTarget = RootToTarget.Length();
 	if (DistanceToTarget <= GetIKSystemLength())
-		BackTrackFromLeafArm(Root, Controller, Target);
+		BackTrackFromLeafArm(Root, Controller, LocalTarget);
 	else
 	{
 		RootToTarget.Normalize();
@@ -39,10 +47,10 @@ void ABaseIKActor::BackTrackFromLeafArm(USceneComponent* Root, USceneComponent* 
 void ABaseIKActor::CalculatePsiAngle(USceneComponent* Root, USceneComponent* Component, FVector Target)
 {
 	USceneComponent* Parent = Component->GetAttachParent();
-	FVector ParentOgLocation = GetOriginalLocationOfComponent(Parent);
+	FVector ParentOgLocation = ULibrary::ToActorLocalSpace(this, GetOriginalWorldLocationOfComponent(Parent));
 	FVector ParentOgToTarget = Target - ParentOgLocation;
 	float ParentOgToTargetLen = ParentOgToTarget.Length();
-	FVector CompOgLocation = GetOriginalLocationOfComponent(Component);
+	FVector CompOgLocation = ULibrary::ToActorLocalSpace(this, GetOriginalWorldLocationOfComponent(Component));
 	FVector ParentOgToComponentOg = CompOgLocation - ParentOgLocation;
 	float ParentOgToComponentOgLen = ParentOgToComponentOg.Length();
 
@@ -50,7 +58,7 @@ void ABaseIKActor::CalculatePsiAngle(USceneComponent* Root, USceneComponent* Com
 	TargetToParentOg.Normalize();
 	TargetToParentOg *= ParentOgToComponentOgLen;
 
-	FVector RootLocation = Root->GetComponentLocation();
+	FVector RootLocation = ULibrary::ToActorLocalSpace(this, Root->GetComponentLocation());
 	FVector RootToTarget = Target - RootLocation;
 	FVector RootToParent = RootToTarget + TargetToParentOg;
 	float RootToParentLen = RootToParent.Length();
@@ -77,7 +85,11 @@ void ABaseIKActor::CalculatePsiAngle(USceneComponent* Root, USceneComponent* Com
 		float Dot = FVector::DotProduct(ParentOgToTarget, ParentOgToComponentOg);
 		Psi = FMath::RadiansToDegrees(FMath::Acos(Dot / (ParentOgToTargetLen * ParentOgToComponentOgLen)));
 	}
-	Psi = (Target.Y - RootLocation.Y) < 0 ? -Psi : Psi;
+	float TargetY = FMath::Abs(Target.Y);
+	float RootY = FMath::Abs(RootLocation.Y);
+	float Diff = TargetY - RootY;
+	if (Diff < 0.0f || Diff > 0.0f)
+		Psi = (Target.Y - RootLocation.Y) < 0.0f ? -Psi : Psi;
 	ArmData.Add(FArm2DData{ Psi, Parent });
 	BackTrackFromLeafArm(Root, Parent, ParentLocation);
 }
@@ -86,9 +98,9 @@ void ABaseIKActor::ChangePoseFor2ndArm(USceneComponent* Component, FVector Targe
 {
 	USceneComponent* Parent = Component->GetAttachParent();
 	USceneComponent* Root = Parent->GetAttachParent();
-	FVector ComponentLocation = Component->GetComponentLocation();
-	FVector ParentLocation = Parent->GetComponentLocation();
-	FVector RootLocation = Root->GetComponentLocation();
+	FVector ComponentLocation = ULibrary::ToActorLocalSpace(this, Component->GetComponentLocation());
+	FVector ParentLocation = ULibrary::ToActorLocalSpace(this, Parent->GetComponentLocation());
+	FVector RootLocation = ULibrary::ToActorLocalSpace(this, Root->GetComponentLocation());
 
 	FVector ParentToControl = ComponentLocation - ParentLocation;
 	float ParentToControlLen = ParentToControl.Length();
@@ -121,7 +133,9 @@ void ABaseIKActor::ChangePoseFor2ndArm(USceneComponent* Component, FVector Targe
 	if (IsYNegative)
 		Theta1 = -Theta1;
 
-	Root->SetRelativeRotation(FRotator(0, 0, Theta1));
+	FRotator RootRotation = Root->GetRelativeRotation();
+	RootRotation.Roll = Theta1;
+	Root->SetRelativeRotation(RootRotation);
 	float Theta2Numerator = ParentToControlLenSquared + RootToParentLenSquared - RootToTargetLenSquared;
 	float Theta2Denominator = 2 * ParentToControlLen * RootToParentLen;
 	float ArcCosineTheta2 = FMath::RadiansToDegrees(FMath::Acos(Theta2Numerator / Theta2Denominator));

@@ -16,7 +16,7 @@ protected:
 	virtual void BeginPlay() override;
 	UFUNCTION(BlueprintCallable) void ChangePose(USceneComponent* Root, USceneComponent* Controller, FVector Target);
 	UFUNCTION(BlueprintImplementableEvent) float GetIKSystemLength();
-	UFUNCTION(BlueprintImplementableEvent) FVector GetOriginalLocationOfComponent(USceneComponent* Component);
+	UFUNCTION(BlueprintImplementableEvent) FVector GetOriginalWorldLocationOfComponent(USceneComponent* Component);
 private:
 	TArray<FArm2DData> ArmData;
 	void BackTrackFromLeafArm(USceneComponent* Root, USceneComponent* Component, FVector Target);
